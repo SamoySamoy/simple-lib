@@ -1,3 +1,4 @@
+const { DateTime } = require('luxon');
 const mongoose = require('mongoose');
 
 const Schema = mongoose.Schema;
@@ -32,6 +33,26 @@ AuthorSchema
   .virtual('url')
   .get(() => {
     return `/catalog/author/${this._id}`;
+  });
+
+AuthorSchema
+  .virtual('date_formatted')
+  .get(function () {
+    let date = '';
+    if (this.date_of_birth) {
+      date += DateTime
+        .fromJSDate(this.date_of_birth)
+        .toLocaleString(DateTime.DATE_MED);
+      date += ' - '
+    }
+    else date += 'undefined - ';
+    if (this.date_of_death) {
+      date += DateTime
+        .fromJSDate(this.date_of_death)
+        .toLocaleString(DateTime.DATE_MED);
+    }
+    if (date == 'undefined - ') return 'undefined';
+    return date;
   });
 
 //Export model
