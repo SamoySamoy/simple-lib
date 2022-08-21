@@ -1,10 +1,12 @@
 const Book = require('../models/book');
 const Author = require('../models/author');
-const Genre = require('../models/genre');
+const book = require('../models/book');
 const BookInstance = require('../models/bookinstance');
-
 const async = require('async');
+const { body, validationResult } = require("express-validator");
 
+
+//home page
 exports.index = (req, res) => {
   async.parallel({
     book_count(callback) {
@@ -19,8 +21,8 @@ exports.index = (req, res) => {
     author_count(callback) {
       Author.countDocuments({}, callback);
     },
-    genre_count(callback) {
-      Genre.countDocuments({}, callback);
+    book_count(callback) {
+      book.countDocuments({}, callback);
     }
   },
     (err, results) => {
@@ -43,36 +45,354 @@ exports.book_list = function (req, res, next) {
 };
 
 // Display detail page for a specific book.
-exports.book_detail = (req, res) => {
-  res.send(`NOT IMPLEMENTED: Book detail: ${req.params.id}`);
+exports.book_detail = (req, res, next) => {
+  async.parallel(
+    {
+      book(callback) {
+        Book.findById(req.params.id)
+          .populate("author")
+          .populate("genre")
+          .exec(callback);
+      },
+      book_instance(callback) {
+        BookInstance.find({ book: req.params.id }).exec(callback);
+      },
+    },
+    (err, results) => {
+      if (err) {
+        return next(err);
+      }
+      if (results.book == null) {
+        // No results.
+        const err = new Error("Book not found");
+        err.status = 404;
+        return next(err);
+      }
+      // Successful, so render.
+      res.render("book_detail", {
+        title: results.book.title,
+        book: results.book,
+        book_instances: results.book_instance,
+      });
+    }
+  );
 };
 
+
 // Display book create form on GET.
-exports.book_create_get = (req, res) => {
-  res.send('NOT IMPLEMENTED: Book create GET');
+exports.book_create_get = (req, res, next) => {
+  // Get all authors and books, which we can use for adding to our book.
+  async.parallel(
+    {
+      authors(callback) {
+        Author.find(callback);
+      },
+      books(callback) {
+        book.find(callback);
+      },
+    },
+    (err, results) => {
+      if (err) {
+        return next(err);
+      }
+      res.render("book_form", {
+        title: "Create Book",
+        authors: results.authors,
+        books: results.books,
+      });
+    }
+  );
 };
 
 // Handle book create on POST.
-exports.book_create_post = (req, res) => {
-  res.send('NOT IMPLEMENTED: Book create POST');
+exports.book_create_post = [
+  // Convert the book to an array.
+  (req, res, next) => {
+    if (!Array.isArray(req.body.book)) {
+      req.body.book =
+        typeof req.body.book === "undefined" ? [] : [req.body.book];
+    }
+    next();
+  },
+
+  // Validate and sanitize fields.
+  body("title", "Title must not be empty.")
+    .trim()
+    .isLength({ min: 1 })
+    .escape(),
+  body("author", "Author must not be empty.")
+    .trim()
+    .isLength({ min: 1 })
+    .escape(),
+  body("summary", "Summary must not be empty.")
+    .trim()
+    .isLength({ min: 1 })
+    .escape(),
+  body("isbn", "ISBN must not be empty").trim().isLength({ min: 1 }).escape(),
+  body("book.*").escape(),
+
+  // Process request after validation and sanitization.
+  (req, res, next) => {
+    // Extract the validation errors from a request.
+    const errors = validationResult(req);
+
+    // Create a Book object with escaped and trimmed data.
+    const book = new Book({
+      title: req.body.title,
+      author: req.body.author,
+      summary: req.body.summary,
+      isbn: req.body.isbn,
+      book: req.body.book,
+    });
+
+    if (!errors.isEmpty()) {
+      // There are errors. Render form again with sanitized values/error messages.
+
+      // Get all authors and books for form.
+      async.parallel(
+        {
+          authors(callback) {
+            Author.find(callback);
+          },
+          books(callback) {
+            book.find(callback);
+          },
+        },
+        (err, results) => {
+          if (err) {
+            return next(err);
+          }
+
+          // Mark our selected books as checked.
+          for (const book of results.books) {
+            if (book.book.includes(book._id)) {
+              book.checked = "true";
+            }
+          }
+          res.render("book_form", {
+            title: "Create Book",
+            authors: results.authors,
+            books: results.books,
+            book,
+            errors: errors.array(),
+          });
+        }
+      );
+      return;
+    }
+
+    // Data from form is valid. Save book.
+    book.save((err) => {
+      if (err) {
+        return next(err);
+      }
+
+      // Successful: redirect to new book record.
+      res.redirect(book.url);
+    });
+  },
+];
+
+// Display Book delete form on GET.
+exports.book_delete_get = (req, res, next) => {
+  async.parallel(
+    {
+      book(callback) {
+        Book.findById(req.params.id).exec(callback);
+      },
+      books_bookinstances(callback) {
+        BookInstance.find({ book: req.params.id }).exec(callback);
+      },
+    },
+    (err, results) => {
+      if (err) {
+        return next(err);
+      }
+      if (results.book == null) {
+        // No results.
+        res.redirect("/catalog/books");
+      }
+      // Successful, so render.
+      res.render("book_delete", {
+        title: "Delete book",
+        book: results.book,
+        book_bookinstances: results.books_bookinstances,
+      });
+    }
+  );
 };
 
-// Display book delete form on GET.
-exports.book_delete_get = (req, res) => {
-  res.send('NOT IMPLEMENTED: Book delete GET');
+// Handle Book delete on POST.
+exports.book_delete_post = (req, res, next) => {
+  async.parallel(
+    {
+      book(callback) {
+        Book.findById(req.body.bookid).exec(callback);
+      },
+      books_bookinstances(callback) {
+        BookInstance.find({ book: req.body.genreid }).exec(callback);
+      },
+    },
+    (err, results) => {
+      if (err) {
+        return next(err);
+      }
+      // Success
+      if (results.books_bookinstances.length > 0) {
+        // book has bookinstances. Render in same way as for GET route.
+        res.render("book_delete", {
+          title: "Delete book",
+          book: results.book,
+          book_bookinstaces: results.books_bookinstances,
+        });
+        return;
+      }
+      // book has no bookinstances. Delete object and redirect to the list of books.
+      Book.findByIdAndRemove(req.body.bookid, (err) => {
+        if (err) {
+          return next(err);
+        }
+        // Success - go to book list
+        res.redirect("/catalog/books");
+      });
+    }
+  );
 };
 
-// Handle book delete on POST.
-exports.book_delete_post = (req, res) => {
-  res.send('NOT IMPLEMENTED: Book delete POST');
-};
 
 // Display book update form on GET.
-exports.book_update_get = (req, res) => {
-  res.send('NOT IMPLEMENTED: Book update GET');
+exports.book_update_get = (req, res, next) => {
+  // Get book, authors and books for form.
+  async.parallel(
+    {
+      book(callback) {
+        Book.findById(req.params.id)
+          .populate("author")
+          .populate("book")
+          .exec(callback);
+      },
+      authors(callback) {
+        Author.find(callback);
+      },
+      books(callback) {
+        book.find(callback);
+      },
+    },
+    (err, results) => {
+      if (err) {
+        return next(err);
+      }
+      if (results.book == null) {
+        // No results.
+        const err = new Error("Book not found");
+        err.status = 404;
+        return next(err);
+      }
+      // Success.
+      // Mark our selected books as checked.
+      for (const book of results.books) {
+        for (const bookbook of results.book.book) {
+          if (book._id.toString() === bookbook._id.toString()) {
+            book.checked = "true";
+          }
+        }
+      }
+      res.render("book_form", {
+        title: "Update Book",
+        authors: results.authors,
+        books: results.books,
+        book: results.book,
+      });
+    }
+  );
 };
 
+
 // Handle book update on POST.
-exports.book_update_post = (req, res) => {
-  res.send('NOT IMPLEMENTED: Book update POST');
-};
+exports.book_update_post = [
+  // Convert the book to an array
+  (req, res, next) => {
+    if (!Array.isArray(req.body.book)) {
+      req.body.book = typeof req.body.book === "undefined" ? [] : [req.body.book];
+    }
+    next();
+  },
+
+  // Validate and sanitize fields.
+  body("title", "Title must not be empty.")
+    .trim()
+    .isLength({ min: 1 })
+    .escape(),
+  body("author", "Author must not be empty.")
+    .trim()
+    .isLength({ min: 1 })
+    .escape(),
+  body("summary", "Summary must not be empty.")
+    .trim()
+    .isLength({ min: 1 })
+    .escape(),
+  body("isbn", "ISBN must not be empty").trim().isLength({ min: 1 }).escape(),
+  body("book.*").escape(),
+
+  // Process request after validation and sanitization.
+  (req, res, next) => {
+    // Extract the validation errors from a request.
+    const errors = validationResult(req);
+
+    // Create a Book object with escaped/trimmed data and old id.
+    const book = new Book({
+      title: req.body.title,
+      author: req.body.author,
+      summary: req.body.summary,
+      isbn: req.body.isbn,
+      book: typeof req.body.book === "undefined" ? [] : req.body.book,
+      _id: req.params.id, //This is required, or a new ID will be assigned!
+    });
+
+    if (!errors.isEmpty()) {
+      // There are errors. Render form again with sanitized values/error messages.
+
+      // Get all authors and books for form.
+      async.parallel(
+        {
+          authors(callback) {
+            Author.find(callback);
+          },
+          books(callback) {
+            book.find(callback);
+          },
+        },
+        (err, results) => {
+          if (err) {
+            return next(err);
+          }
+
+          // Mark our selected books as checked.
+          for (const book of results.books) {
+            if (book.book.includes(book._id)) {
+              book.checked = "true";
+            }
+          }
+          res.render("book_form", {
+            title: "Update Book",
+            authors: results.authors,
+            books: results.books,
+            book,
+            errors: errors.array(),
+          });
+        }
+      );
+      return;
+    }
+
+    // Data from form is valid. Update the record.
+    Book.findByIdAndUpdate(req.params.id, book, {}, (err, thebook) => {
+      if (err) {
+        return next(err);
+      }
+
+      // Successful: redirect to book detail page.
+      res.redirect(thebook.url);
+    });
+  },
+];

@@ -31,28 +31,40 @@ AuthorSchema
 // Virtual for author's URL
 AuthorSchema
   .virtual('url')
-  .get(() => {
+  .get(function () {
     return `/catalog/author/${this._id}`;
   });
 
+//Formatted date of authors  
 AuthorSchema
   .virtual('date_formatted')
   .get(function () {
     let date = '';
-    if (this.date_of_birth) {
+    if (this.date_of_birth && !this.date_of_death) {
+      date += DateTime
+        .fromJSDate(this.date_of_birth)
+        .toLocaleString(DateTime.DATE_MED);
+      return `${date} - now`;
+    }
+    if (!this.date_of_birth && !this.date_of_death) {
+      return 'undefined';
+    }
+    if (this.date_of_birth && this.date_of_death) {
       date += DateTime
         .fromJSDate(this.date_of_birth)
         .toLocaleString(DateTime.DATE_MED);
       date += ' - '
-    }
-    else date += 'undefined - ';
-    if (this.date_of_death) {
       date += DateTime
         .fromJSDate(this.date_of_death)
         .toLocaleString(DateTime.DATE_MED);
+      return date;
     }
-    if (date == 'undefined - ') return 'undefined';
-    return date;
+    if (!this.date_of_birth && this.date_of_death) {
+      date += DateTime
+        .fromJSDate(this.date_of_death)
+        .toLocaleString(DateTime.DATE_MED);
+      return `undefined - ${date}`;
+    }
   });
 
 //Export model
